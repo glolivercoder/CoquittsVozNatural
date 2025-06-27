@@ -1,0 +1,18 @@
+{
+    "models_dir": "./models",
+    "datasets_dir": "./datasets",
+    "outputs_dir": "./outputs",
+    "default_language": "pt-br",
+    "default_model": "tts_models/pt/cv/vits",
+    "audio_settings": {
+        "sample_rate": 22050,
+        "output_format": "wav"
+    },
+    "ui_settings": {
+        "theme": "dark",
+        "window_size": {
+            "width": 1200,
+            "height": 800
+        }
+    }
+} 

@@ -1,0 +1,15 @@
+{
+    "models": {
+        "xtts_v2": {
+            "name": "tts_models/multilingual/multi-dataset/xtts_v2",
+            "language": "pt",
+            "description": "Modelo XTTS v2 - Alta qualidade para português"
+        },
+        "your_tts": {
+            "name": "tts_models/multilingual/multi-dataset/your_tts",
+            "language": "pt-br",
+            "description": "Modelo YourTTS - Boa qualidade para português brasileiro"
+        }
+    },
+    "default_model": "xtts_v2"
+} 

@@ -1,0 +1,1 @@
+# Pacote Core para Coqui TTS 

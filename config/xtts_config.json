@@ -1,0 +1,142 @@
+{
+    "model": "xtts",
+    "run_name": "xtts_custom",
+    "run_description": "XTTS com configuração customizada para múltiplos idiomas",
+
+    "audio": {
+        "sample_rate": 24000,
+        "win_length": 1024,
+        "hop_length": 256,
+        "mel_fmin": 0,
+        "mel_fmax": 12000,
+        "n_mel_channels": 80
+    },
+
+    "model_params": {
+        "use_phonemes": true,
+        "phoneme_language": null,
+        "compute_f0": true,
+        "f0_cache_path": "f0_cache",
+        "encoder_params": {
+            "hidden_channels": 192,
+            "filter_channels": 768,
+            "filter_channels_dp": 256,
+            "n_heads": 2,
+            "n_layers": 6,
+            "kernel_size": 3,
+            "p_dropout": 0.1,
+            "window_size": 4
+        },
+        "decoder_params": {
+            "initial_channel": 512,
+            "resblock": "1",
+            "resblock_kernel_sizes": [3, 7, 11],
+            "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+            "upsample_rates": [8, 8, 2, 2],
+            "upsample_initial_channel": 512,
+            "upsample_kernel_sizes": [16, 16, 4, 4]
+        },
+        "style_encoder_params": {
+            "encoder_type": "relative",
+            "encoder_params": {
+                "kernel_size": 5,
+                "n_convolutions": 3,
+                "embedding_dim": 512
+            },
+            "n_mel_channels": 80,
+            "d_vector_dim": 512,
+            "lstm_dim": 768,
+            "token_num": 8,
+            "head_num": 8
+        },
+        "speaker_encoder_params": {
+            "model_hidden_size": 768,
+            "model_embedding_size": 256,
+            "model_num_layers": 3,
+            "n_mel_channels": 80
+        }
+    },
+
+    "train_params": {
+        "batch_size": 32,
+        "eval_batch_size": 16,
+        "num_loader_workers": 4,
+        "num_eval_loader_workers": 4,
+        "run_eval": true,
+        "test_delay_epochs": 5,
+        "epochs": 1000,
+        "text_cleaner": "multilingual_cleaners",
+        "use_phonemes": true,
+        "print_step": 25,
+        "print_eval": true,
+        "save_step": 1000,
+        "save_n_checkpoints": 5,
+        "save_best_after": 10000,
+        "save_checkpoints": true,
+        "target_loss": null,
+        "print_eval_step": 1000,
+        "mixed_precision": true,
+        "lr": 0.0002,
+        "lr_scheduler": "ExponentialLR",
+        "lr_scheduler_params": {
+            "gamma": 0.999875,
+            "last_epoch": -1
+        },
+        "scheduler_after_epoch": true,
+        "optimizer": "AdamW",
+        "optimizer_params": {
+            "betas": [0.8, 0.99],
+            "eps": 1e-9,
+            "weight_decay": 0.01
+        },
+        "grad_clip": 5.0,
+        "seq_len": 6000,
+        "compute_input_seq_cache": true,
+        "use_noise_augment": true,
+        "use_audio_augment": true,
+        "audio_augment_params": {
+            "additive_noise": {
+                "min_snr_db": 0,
+                "max_snr_db": 15,
+                "noise_proba": 0.5
+            },
+            "time_stretch": {
+                "min_rate": 0.8,
+                "max_rate": 1.2,
+                "stretch_proba": 0.5
+            },
+            "freq_mask": {
+                "min_freq_mask": 0.0,
+                "max_freq_mask": 0.3,
+                "freq_mask_proba": 0.5
+            }
+        }
+    },
+
+    "data_params": {
+        "training_files": "metadata.csv",
+        "validation_files": "metadata_val.csv",
+        "text_cleaners": ["multilingual_cleaners"],
+        "add_blank": true,
+        "n_fft": 1024,
+        "hop_length": 256,
+        "win_length": 1024,
+        "sample_rate": 24000,
+        "mel_fmin": 0.0,
+        "mel_fmax": 12000.0,
+        "n_mels": 80,
+        "use_phonemes": true,
+        "compute_f0": true,
+        "f0_cache_path": "f0_cache",
+        "compute_input_seq_cache": true,
+        "languages": ["pt-br", "en", "es"],
+        "use_language_embedding": true,
+        "language_embedding_dim": 256,
+        "use_speaker_embedding": true,
+        "speaker_embedding_dim": 256,
+        "min_audio_len": 1.0,
+        "max_audio_len": 10.0,
+        "min_text_len": 1,
+        "max_text_len": 200
+    }
+} 
