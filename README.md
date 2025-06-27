@@ -42,4 +42,4 @@ Os modelos serão disponibilizados na pasta `models/` após o treinamento.
 - CPU multi-core (recomendado)
 
 ## Licença
-MIT 
+MIT
