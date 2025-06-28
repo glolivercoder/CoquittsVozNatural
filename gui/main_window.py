@@ -7,378 +7,591 @@ import os
 import json
 import pygame
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, List
+from core.logger import app_logger
+from TTS.api import TTS
 
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
+        app_logger.info("Iniciando interface gráfica")
         
-        # Configuração de logging
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
-        
-        # Configuração da janela
-        self.title("Coqui TTS - Interface Gráfica")
-        self.geometry("1200x800")
-        self.minsize(1000, 700)
-        
-        # Inicializar engines
-        self.tts_engine = TTSEngine()
-        self.model_manager = ModelManager()
-        
-        # Inicializar pygame para áudio
-        pygame.mixer.init()
-        
-        # Estado da aplicação
-        self.current_audio_file = None
-        self.is_playing = False
-        self.training_in_progress = False
-        
-        # Criar interface
-        self.create_widgets()
-        self.load_config()
-        
-    def create_widgets(self):
-        # Criar notebook para abas
-        self.tabview = ctk.CTkTabview(self, width=1150, height=750)
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Criar abas
-        self.create_tts_tab()
-        self.create_training_tab()
-        self.create_models_tab()
-        self.create_settings_tab()
-        
-    def create_tts_tab(self):
-        # Aba para síntese de voz
-        tab_tts = self.tabview.add("Síntese TTS")
-        
-        # Frame para seleção de modelo
-        model_frame = ctk.CTkFrame(tab_tts)
-        model_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(model_frame, text="Modelo:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        self.model_var = ctk.StringVar()
-        self.model_dropdown = ctk.CTkComboBox(
-            model_frame,
-            variable=self.model_var,
-            values=self.get_available_models(),
-            width=400,
-            command=self.on_model_change
-        )
-        self.model_dropdown.pack(anchor="w", padx=10, pady=5)
-        
-        # Frame para clonagem de voz (XTTS)
-        self.voice_clone_frame = ctk.CTkFrame(tab_tts)
-        self.voice_clone_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(self.voice_clone_frame, text="Clonagem de Voz (XTTS):", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        voice_controls = ctk.CTkFrame(self.voice_clone_frame)
-        voice_controls.pack(fill="x", padx=10, pady=5)
-        
-        self.voice_path_entry = ctk.CTkEntry(voice_controls, placeholder_text="Arquivo de voz para clonagem", width=400)
-        self.voice_path_entry.pack(side="left", padx=5)
-        
-        ctk.CTkButton(voice_controls, text="Procurar", command=self.browse_voice_file, width=100).pack(side="left", padx=5)
-        
-        # Frame para idioma
-        lang_frame = ctk.CTkFrame(tab_tts)
-        lang_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(lang_frame, text="Idioma:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        self.lang_var = ctk.StringVar(value="pt-br")
-        lang_options = ctk.CTkFrame(lang_frame)
-        lang_options.pack(anchor="w", padx=10, pady=5)
-        
-        ctk.CTkRadioButton(lang_options, text="Português BR", variable=self.lang_var, value="pt-br").pack(side="left", padx=10)
-        ctk.CTkRadioButton(lang_options, text="Inglês", variable=self.lang_var, value="en").pack(side="left", padx=10)
-        ctk.CTkRadioButton(lang_options, text="Espanhol", variable=self.lang_var, value="es").pack(side="left", padx=10)
-        
-        # Frame para texto
-        text_frame = ctk.CTkFrame(tab_tts)
-        text_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        ctk.CTkLabel(text_frame, text="Texto para síntese:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        self.text_input = ctk.CTkTextbox(text_frame, height=150)
-        self.text_input.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # Frame para controles
-        controls_frame = ctk.CTkFrame(tab_tts)
-        controls_frame.pack(fill="x", padx=20, pady=10)
-        
-        # Botões de controle
-        button_frame = ctk.CTkFrame(controls_frame)
-        button_frame.pack(pady=10)
-        
-        self.generate_btn = ctk.CTkButton(button_frame, text="Gerar Áudio", command=self.generate_audio, width=120)
-        self.generate_btn.pack(side="left", padx=10)
-        
-        self.play_btn = ctk.CTkButton(button_frame, text="Reproduzir", command=self.play_audio, width=120, state="disabled")
-        self.play_btn.pack(side="left", padx=10)
-        
-        self.stop_btn = ctk.CTkButton(button_frame, text="Parar", command=self.stop_audio, width=120, state="disabled")
-        self.stop_btn.pack(side="left", padx=10)
-        
-        self.save_btn = ctk.CTkButton(button_frame, text="Salvar", command=self.save_audio, width=120, state="disabled")
-        self.save_btn.pack(side="left", padx=10)
-        
-        # Barra de progresso
-        self.progress = ctk.CTkProgressBar(controls_frame, width=600)
-        self.progress.pack(pady=10)
-        self.progress.set(0)
-        
-        # Status
-        self.status_label = ctk.CTkLabel(controls_frame, text="Pronto", font=("Arial", 12))
-        self.status_label.pack(pady=5)
-        
-    def create_training_tab(self):
-        # Aba para treinamento
-        tab_training = self.tabview.add("Treinamento")
-        
-        # Frame para dataset
-        dataset_frame = ctk.CTkFrame(tab_training)
-        dataset_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(dataset_frame, text="Dataset:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Controles do dataset
-        dataset_controls = ctk.CTkFrame(dataset_frame)
-        dataset_controls.pack(fill="x", padx=10, pady=5)
-        
-        self.dataset_path = ctk.CTkEntry(dataset_controls, placeholder_text="Caminho do dataset", width=400)
-        self.dataset_path.pack(side="left", padx=5)
-        
-        ctk.CTkButton(dataset_controls, text="Procurar", command=self.browse_dataset, width=100).pack(side="left", padx=5)
-        ctk.CTkButton(dataset_controls, text="Validar", command=self.validate_dataset, width=100).pack(side="left", padx=5)
-        
-        # Frame para configurações de treinamento
-        config_frame = ctk.CTkFrame(tab_training)
-        config_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(config_frame, text="Configurações de Treinamento:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Grid de configurações
-        config_grid = ctk.CTkFrame(config_frame)
-        config_grid.pack(fill="x", padx=10, pady=5)
-        
-        # Modelo base
-        ctk.CTkLabel(config_grid, text="Modelo Base:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        self.base_model_var = ctk.StringVar(value="VITS")
-        self.base_model_dropdown = ctk.CTkComboBox(
-            config_grid,
-            variable=self.base_model_var,
-            values=["VITS", "Tacotron2", "FastSpeech2", "XTTS"],
-            width=150
-        )
-        self.base_model_dropdown.grid(row=0, column=1, padx=5, pady=5)
-        
-        # Epochs
-        ctk.CTkLabel(config_grid, text="Epochs:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
-        self.epochs_entry = ctk.CTkEntry(config_grid, width=100)
-        self.epochs_entry.insert(0, "1000")
-        self.epochs_entry.grid(row=0, column=3, padx=5, pady=5)
-        
-        # Batch Size
-        ctk.CTkLabel(config_grid, text="Batch Size:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.batch_size_entry = ctk.CTkEntry(config_grid, width=100)
-        self.batch_size_entry.insert(0, "32")
-        self.batch_size_entry.grid(row=1, column=1, padx=5, pady=5)
-        
-        # Learning Rate
-        ctk.CTkLabel(config_grid, text="Learning Rate:").grid(row=1, column=2, sticky="w", padx=5, pady=5)
-        self.lr_entry = ctk.CTkEntry(config_grid, width=100)
-        self.lr_entry.insert(0, "0.0002")
-        self.lr_entry.grid(row=1, column=3, padx=5, pady=5)
-        
-        # Frame para controles de treinamento
-        training_controls = ctk.CTkFrame(tab_training)
-        training_controls.pack(fill="x", padx=20, pady=10)
-        
-        self.start_training_btn = ctk.CTkButton(
-            training_controls,
-            text="Iniciar Treinamento",
-            command=self.start_training,
-            width=150
-        )
-        self.start_training_btn.pack(side="left", padx=10, pady=10)
-        
-        self.stop_training_btn = ctk.CTkButton(
-            training_controls,
-            text="Parar Treinamento",
-            command=self.stop_training,
-            width=150,
-            state="disabled"
-        )
-        self.stop_training_btn.pack(side="left", padx=10, pady=10)
-        
-        # Frame para log de treinamento
-        log_frame = ctk.CTkFrame(tab_training)
-        log_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        ctk.CTkLabel(log_frame, text="Log de Treinamento:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        self.training_log = ctk.CTkTextbox(log_frame, height=200)
-        self.training_log.pack(fill="both", expand=True, padx=10, pady=5)
-        
-    def create_models_tab(self):
-        # Aba para gerenciar modelos
-        tab_models = self.tabview.add("Modelos")
-        
-        # Frame para modelos disponíveis
-        available_frame = ctk.CTkFrame(tab_models)
-        available_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        ctk.CTkLabel(available_frame, text="Modelos Disponíveis:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Lista de modelos
-        self.models_listbox = ctk.CTkScrollableFrame(available_frame, height=300)
-        self.models_listbox.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # Botões de gerenciamento
-        models_controls = ctk.CTkFrame(available_frame)
-        models_controls.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkButton(models_controls, text="Baixar Modelo", command=self.download_model, width=120).pack(side="left", padx=5)
-        ctk.CTkButton(models_controls, text="Remover Modelo", command=self.remove_model, width=120).pack(side="left", padx=5)
-        ctk.CTkButton(models_controls, text="Atualizar Lista", command=self.refresh_models, width=120).pack(side="left", padx=5)
-        
-    def create_settings_tab(self):
-        # Aba para configurações
-        tab_settings = self.tabview.add("Configurações")
-        
-        # Frame para configurações gerais
-        general_frame = ctk.CTkFrame(tab_settings)
-        general_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(general_frame, text="Configurações Gerais:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Diretórios
-        dirs_frame = ctk.CTkFrame(general_frame)
-        dirs_frame.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(dirs_frame, text="Diretório de Modelos:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        self.models_dir_entry = ctk.CTkEntry(dirs_frame, width=300)
-        self.models_dir_entry.grid(row=0, column=1, padx=5, pady=5)
-        ctk.CTkButton(dirs_frame, text="Procurar", command=self.browse_models_dir, width=80).grid(row=0, column=2, padx=5, pady=5)
-        
-        ctk.CTkLabel(dirs_frame, text="Diretório de Saída:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.output_dir_entry = ctk.CTkEntry(dirs_frame, width=300)
-        self.output_dir_entry.grid(row=1, column=1, padx=5, pady=5)
-        ctk.CTkButton(dirs_frame, text="Procurar", command=self.browse_output_dir, width=80).grid(row=1, column=2, padx=5, pady=5)
-        
-        # Botões de configuração
-        settings_controls = ctk.CTkFrame(tab_settings)
-        settings_controls.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkButton(settings_controls, text="Salvar Configurações", command=self.save_config, width=150).pack(side="left", padx=10)
-        ctk.CTkButton(settings_controls, text="Carregar Configurações", command=self.load_config, width=150).pack(side="left", padx=10)
-        ctk.CTkButton(settings_controls, text="Resetar", command=self.reset_config, width=100).pack(side="left", padx=10)
-    
-    # Métodos de funcionalidade
-    def get_available_models(self):
-        models = []
-        for language, model_dict in self.tts_engine.list_available_models().items():
-            for model_name in model_dict.keys():
-                models.append(f"{model_name} ({language})")
-        return models
-    
-    def on_model_change(self, choice):
-        model_name = choice.split(" (")[0]
-        model_info = self.tts_engine.get_model_info(model_name)
-        
-        # Atualizar visibilidade do frame de clonagem de voz
-        if model_info.get("support_voice_cloning", False):
-            self.voice_clone_frame.pack(fill="x", padx=20, pady=10)
-        else:
-            self.voice_clone_frame.pack_forget()
-        
-        self.status_label.configure(text=f"Modelo selecionado: {choice}")
-    
-    def generate_audio(self):
-        text = self.text_input.get("1.0", "end-1c")
-        if not text.strip():
-            messagebox.showwarning("Aviso", "Digite um texto para síntese")
-            return
-        
-        # Executar geração em thread separada
-        thread = threading.Thread(target=self._generate_audio_thread, args=(text,))
-        thread.daemon = True
-        thread.start()
-    
-    def _generate_audio_thread(self, text):
         try:
-            self.progress.set(0)
-            self.status_label.configure(text="Gerando áudio...")
-            self.generate_btn.configure(state="disabled")
+            self.setup_window()
+            self.initialize_components()
+            self.create_widgets()
+            self.load_config()
+            app_logger.info("Interface gráfica inicializada com sucesso")
+        except Exception as e:
+            app_logger.critical("Erro ao inicializar interface gráfica", exc_info=True)
+            raise
+
+    def setup_window(self):
+        """Configura a janela principal"""
+        try:
+            self.title("Coqui TTS - Interface Gráfica")
+            self.geometry("1200x800")
+            self.minsize(1000, 700)
+            app_logger.debug("Janela principal configurada")
+        except Exception as e:
+            app_logger.error("Erro ao configurar janela principal", exc_info=True)
+            raise
+
+    def initialize_components(self):
+        """Inicializa os componentes principais"""
+        try:
+            app_logger.debug("Inicializando componentes")
             
-            # Preparar parâmetros
-            kwargs = {
-                "text": text,
-                "output_path": "output.wav",
-                "language": self.lang_var.get()
-            }
+            # Inicializa o TTS Engine e Model Manager
+            self.tts_engine = TTSEngine()
+            self.model_manager = ModelManager()
             
-            # Adicionar arquivo de voz se necessário
-            voice_path = self.voice_path_entry.get()
-            if voice_path and os.path.exists(voice_path):
-                kwargs["speaker_wav"] = voice_path
+            # Inicializa o pygame para áudio
+            pygame.mixer.init()
             
-            # Gerar áudio
-            self.current_audio_file = self.tts_engine.generate_speech(**kwargs)
+            # Estado da aplicação
+            self.current_audio_file = None
+            self.is_playing = False
+            self.training_in_progress = False
             
-            self.status_label.configure(text="Áudio gerado com sucesso!")
-            self.play_btn.configure(state="normal")
-            self.stop_btn.configure(state="normal")
-            self.save_btn.configure(state="normal")
+            # Tenta carregar o modelo padrão (VITS pt-br)
+            try:
+                default_success = self.tts_engine.load_model("tts_models/pt/cv/vits")
+                if default_success:
+                    app_logger.info("Modelo padrão (VITS pt-br) carregado com sucesso")
+                else:
+                    app_logger.warning("Não foi possível carregar o modelo padrão")
+            except Exception as e:
+                app_logger.error("Erro ao carregar modelo padrão", exc_info=True)
+            
+            app_logger.debug("Componentes inicializados com sucesso")
             
         except Exception as e:
-            self.logger.error(f"Erro ao gerar áudio: {e}")
-            messagebox.showerror("Erro", str(e))
-        finally:
-            self.generate_btn.configure(state="normal")
+            app_logger.error("Erro ao inicializar componentes", exc_info=True)
+            raise
+
+    def create_widgets(self):
+        """Cria os widgets da interface"""
+        try:
+            app_logger.debug("Criando widgets")
+            
+            # Criar notebook para abas
+            self.tabview = ctk.CTkTabview(self, width=1150, height=750)
+            self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+            
+            # Criar abas
+            self.create_tts_tab()
+            self.create_training_tab()
+            self.create_models_tab()
+            self.create_settings_tab()
+            
+            app_logger.debug("Widgets criados com sucesso")
+        except Exception as e:
+            app_logger.error("Erro ao criar widgets", exc_info=True)
+            raise
+
+    def create_tts_tab(self):
+        """Cria a aba de síntese"""
+        try:
+            app_logger.debug("Criando aba de síntese")
+            tab_tts = self.tabview.add("Síntese TTS")
+            
+            # Frame para seleção de modelo
+            model_frame = ctk.CTkFrame(tab_tts)
+            model_frame.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkLabel(model_frame, text="Modelo:", font=("Arial", 14, "bold")).pack(side="left", padx=10)
+            
+            # ComboBox para seleção de modelo
+            self.model_var = ctk.StringVar()
+            self.model_combobox = ctk.CTkComboBox(
+                model_frame,
+                variable=self.model_var,
+                values=self.get_available_models(),
+                width=400,
+                command=self.on_model_change
+            )
+            self.model_combobox.pack(side="left", padx=10)
+            
+            # Frame para clonagem de voz (XTTS)
+            self.voice_clone_frame = ctk.CTkFrame(tab_tts)
+            
+            ctk.CTkLabel(self.voice_clone_frame, text="Clonagem de Voz (XTTS):", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+            
+            voice_controls = ctk.CTkFrame(self.voice_clone_frame)
+            voice_controls.pack(fill="x", padx=10, pady=5)
+            
+            self.voice_path_entry = ctk.CTkEntry(voice_controls, placeholder_text="Arquivo de voz para clonagem", width=400)
+            self.voice_path_entry.pack(side="left", padx=5)
+            
+            ctk.CTkButton(voice_controls, text="Procurar", command=self.browse_voice_file, width=100).pack(side="left", padx=5)
+            
+            # Frame para idioma
+            lang_frame = ctk.CTkFrame(tab_tts)
+            lang_frame.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkLabel(lang_frame, text="Idioma:", font=("Arial", 14, "bold")).pack(side="left", padx=10)
+            
+            # Radio buttons para seleção de idioma
+            self.language_var = ctk.StringVar(value="Português BR")
+            ctk.CTkRadioButton(lang_frame, text="Português BR", variable=self.language_var, value="Português BR").pack(side="left", padx=10)
+            ctk.CTkRadioButton(lang_frame, text="Inglês", variable=self.language_var, value="Inglês").pack(side="left", padx=10)
+            ctk.CTkRadioButton(lang_frame, text="Espanhol", variable=self.language_var, value="Espanhol").pack(side="left", padx=10)
+            
+            # Frame para texto
+            text_frame = ctk.CTkFrame(tab_tts)
+            text_frame.pack(fill="both", expand=True, padx=20, pady=10)
+            
+            ctk.CTkLabel(text_frame, text="Texto para síntese:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+            
+            # Área de texto com scrollbar
+            self.text_input = ctk.CTkTextbox(text_frame, height=200)
+            self.text_input.pack(fill="both", expand=True, padx=10, pady=5)
+            
+            # Frame para controles
+            controls_frame = ctk.CTkFrame(tab_tts)
+            controls_frame.pack(fill="x", padx=20, pady=10)
+            
+            # Botões de controle
+            button_frame = ctk.CTkFrame(controls_frame)
+            button_frame.pack(pady=10)
+            
+            self.generate_btn = ctk.CTkButton(button_frame, text="Gerar Áudio", command=self.generate_audio, width=120)
+            self.generate_btn.pack(side="left", padx=10)
+            
+            self.play_btn = ctk.CTkButton(button_frame, text="Reproduzir", command=self.play_audio, width=120, state="disabled")
+            self.play_btn.pack(side="left", padx=10)
+            
+            self.stop_btn = ctk.CTkButton(button_frame, text="Parar", command=self.stop_audio, width=120, state="disabled")
+            self.stop_btn.pack(side="left", padx=10)
+            
+            self.save_btn = ctk.CTkButton(button_frame, text="Salvar", command=self.save_audio, width=120, state="disabled")
+            self.save_btn.pack(side="left", padx=10)
+            
+            # Barra de progresso
+            self.progress = ctk.CTkProgressBar(controls_frame, width=600)
+            self.progress.pack(pady=10)
             self.progress.set(0)
+            
+            # Status
+            self.status_label = ctk.CTkLabel(controls_frame, text="Pronto", font=("Arial", 12))
+            self.status_label.pack(pady=5)
+            
+            app_logger.debug("Aba de síntese criada com sucesso")
+        except Exception as e:
+            app_logger.error("Erro ao criar aba de síntese", exc_info=True)
+            raise
+
+    def create_training_tab(self):
+        """Cria a aba de treinamento"""
+        try:
+            app_logger.debug("Criando aba de treinamento")
+            tab_training = self.tabview.add("Treinamento")
+            
+            # Frame para dataset
+            dataset_frame = ctk.CTkFrame(tab_training)
+            dataset_frame.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkLabel(dataset_frame, text="Dataset:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+            
+            # Controles do dataset
+            dataset_controls = ctk.CTkFrame(dataset_frame)
+            dataset_controls.pack(fill="x", padx=10, pady=5)
+            
+            self.dataset_path = ctk.CTkEntry(dataset_controls, placeholder_text="Caminho do dataset", width=400)
+            self.dataset_path.pack(side="left", padx=5)
+            
+            ctk.CTkButton(dataset_controls, text="Procurar", command=self.browse_dataset, width=100).pack(side="left", padx=5)
+            ctk.CTkButton(dataset_controls, text="Validar", command=self.validate_dataset, width=100).pack(side="left", padx=5)
+            
+            # Frame para configurações de treinamento
+            config_frame = ctk.CTkFrame(tab_training)
+            config_frame.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkLabel(config_frame, text="Configurações de Treinamento:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+            
+            # Grid de configurações
+            config_grid = ctk.CTkFrame(config_frame)
+            config_grid.pack(fill="x", padx=10, pady=5)
+            
+            # Modelo base
+            ctk.CTkLabel(config_grid, text="Modelo Base:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.base_model_var = ctk.StringVar(value="VITS")
+            self.base_model_dropdown = ctk.CTkComboBox(
+                config_grid,
+                variable=self.base_model_var,
+                values=["VITS", "Tacotron2", "FastSpeech2", "XTTS"],
+                width=150
+            )
+            self.base_model_dropdown.grid(row=0, column=1, padx=5, pady=5)
+            
+            # Epochs
+            ctk.CTkLabel(config_grid, text="Epochs:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
+            self.epochs_entry = ctk.CTkEntry(config_grid, width=100)
+            self.epochs_entry.insert(0, "1000")
+            self.epochs_entry.grid(row=0, column=3, padx=5, pady=5)
+            
+            # Batch Size
+            ctk.CTkLabel(config_grid, text="Batch Size:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.batch_size_entry = ctk.CTkEntry(config_grid, width=100)
+            self.batch_size_entry.insert(0, "32")
+            self.batch_size_entry.grid(row=1, column=1, padx=5, pady=5)
+            
+            # Learning Rate
+            ctk.CTkLabel(config_grid, text="Learning Rate:").grid(row=1, column=2, sticky="w", padx=5, pady=5)
+            self.lr_entry = ctk.CTkEntry(config_grid, width=100)
+            self.lr_entry.insert(0, "0.0002")
+            self.lr_entry.grid(row=1, column=3, padx=5, pady=5)
+            
+            # Frame para controles de treinamento
+            training_controls = ctk.CTkFrame(tab_training)
+            training_controls.pack(fill="x", padx=20, pady=10)
+            
+            self.start_training_btn = ctk.CTkButton(
+                training_controls,
+                text="Iniciar Treinamento",
+                command=self.start_training,
+                width=150
+            )
+            self.start_training_btn.pack(side="left", padx=10, pady=10)
+            
+            self.stop_training_btn = ctk.CTkButton(
+                training_controls,
+                text="Parar Treinamento",
+                command=self.stop_training,
+                width=150,
+                state="disabled"
+            )
+            self.stop_training_btn.pack(side="left", padx=10, pady=10)
+            
+            # Frame para log de treinamento
+            log_frame = ctk.CTkFrame(tab_training)
+            log_frame.pack(fill="both", expand=True, padx=20, pady=10)
+            
+            ctk.CTkLabel(log_frame, text="Log de Treinamento:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+            
+            self.training_log = ctk.CTkTextbox(log_frame, height=200)
+            self.training_log.pack(fill="both", expand=True, padx=10, pady=5)
+            
+            app_logger.debug("Aba de treinamento criada com sucesso")
+        except Exception as e:
+            app_logger.error("Erro ao criar aba de treinamento", exc_info=True)
+            raise
+
+    def create_models_tab(self):
+        """Cria a aba de gerenciamento de modelos"""
+        try:
+            app_logger.debug("Criando aba de modelos")
+            tab_models = self.tabview.add("Modelos")
+            
+            # Frame principal para a aba de modelos
+            models_frame = ctk.CTkFrame(tab_models)
+            models_frame.pack(fill="both", expand=True, padx=20, pady=10)
+            
+            # Frame para a lista de modelos
+            list_frame = ctk.CTkFrame(models_frame)
+            list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+            
+            # Título
+            title_label = ctk.CTkLabel(list_frame, text="Modelos Disponíveis", font=("Arial", 14, "bold"))
+            title_label.pack(anchor="w", padx=10, pady=5)
+            
+            # Lista de modelos com scrollbar
+            self.models_listbox = ctk.CTkTextbox(list_frame, height=300)
+            self.models_listbox.pack(fill="both", expand=True, padx=10, pady=5)
+            
+            # Frame para os botões
+            buttons_frame = ctk.CTkFrame(models_frame)
+            buttons_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Botões
+            refresh_btn = ctk.CTkButton(buttons_frame, text="Atualizar Lista", command=self.refresh_models_list)
+            refresh_btn.pack(side="left", padx=5)
+            
+            download_btn = ctk.CTkButton(buttons_frame, text="Baixar Modelo", command=self.download_model)
+            download_btn.pack(side="left", padx=5)
+            
+            remove_btn = ctk.CTkButton(buttons_frame, text="Remover Modelo", command=self.remove_model)
+            remove_btn.pack(side="left", padx=5)
+            
+            # Inicializa a lista de modelos
+            self.refresh_models_list()
+            
+            app_logger.debug("Aba de modelos criada com sucesso")
+        except Exception as e:
+            app_logger.error("Erro ao criar aba de modelos", exc_info=True)
+            raise
+
+    def create_settings_tab(self):
+        """Cria a aba de configurações"""
+        try:
+            app_logger.debug("Criando aba de configurações")
+            tab_settings = self.tabview.add("Configurações")
+            
+            # Frame para configurações gerais
+            general_frame = ctk.CTkFrame(tab_settings)
+            general_frame.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkLabel(general_frame, text="Configurações Gerais:", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+            
+            # Diretórios
+            dirs_frame = ctk.CTkFrame(general_frame)
+            dirs_frame.pack(fill="x", padx=10, pady=5)
+            
+            ctk.CTkLabel(dirs_frame, text="Diretório de Modelos:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.models_dir_entry = ctk.CTkEntry(dirs_frame, width=300)
+            self.models_dir_entry.grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkButton(dirs_frame, text="Procurar", command=self.browse_models_dir, width=80).grid(row=0, column=2, padx=5, pady=5)
+            
+            ctk.CTkLabel(dirs_frame, text="Diretório de Saída:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.output_dir_entry = ctk.CTkEntry(dirs_frame, width=300)
+            self.output_dir_entry.grid(row=1, column=1, padx=5, pady=5)
+            ctk.CTkButton(dirs_frame, text="Procurar", command=self.browse_output_dir, width=80).grid(row=1, column=2, padx=5, pady=5)
+            
+            # Botões de configuração
+            settings_controls = ctk.CTkFrame(tab_settings)
+            settings_controls.pack(fill="x", padx=20, pady=10)
+            
+            ctk.CTkButton(settings_controls, text="Salvar Configurações", command=self.save_config, width=150).pack(side="left", padx=10)
+            ctk.CTkButton(settings_controls, text="Carregar Configurações", command=self.load_config, width=150).pack(side="left", padx=10)
+            ctk.CTkButton(settings_controls, text="Resetar", command=self.reset_config, width=100).pack(side="left", padx=10)
+            
+            app_logger.debug("Aba de configurações criada com sucesso")
+        except Exception as e:
+            app_logger.error("Erro ao criar aba de configurações", exc_info=True)
+            raise
+
+    # Métodos de funcionalidade
+    def get_available_models(self) -> List[str]:
+        """Obtém lista de modelos disponíveis"""
+        try:
+            models = self.model_manager.get_available_models()
+            if not models or models == ["Nenhum modelo encontrado"]:
+                self.update_status("Nenhum modelo disponível")
+                self.disable_synthesis_controls()
+                return ["Nenhum modelo encontrado"]
+            return models
+        except Exception as e:
+            app_logger.error("Erro ao obter modelos", exc_info=True)
+            self.update_status("Erro ao carregar modelos")
+            self.disable_synthesis_controls()
+            return ["Nenhum modelo encontrado"]
+    
+    def on_model_change(self, choice: str):
+        """Manipula mudança de modelo"""
+        try:
+            app_logger.info(f"Alterando modelo para: {choice}")
+            
+            if choice in ["Nenhum modelo encontrado", "Erro ao carregar modelos", ""]:
+                self.disable_synthesis_controls()
+                return
+            
+            # Extrai o tipo do modelo e idioma do formato "TIPO (IDIOMA)"
+            model_type = choice.split(" (")[0].lower()
+            language = choice.split("(")[1].replace(")", "").strip()
+            
+            # Obtém o caminho do modelo
+            model_path = self.model_manager.get_model_path(model_type, language)
+            
+            try:
+                # Tenta carregar o modelo
+                if not self.tts_engine.load_model(model_path):
+                    raise RuntimeError(f"Falha ao carregar modelo: {model_path}")
+                
+                # Atualiza controles baseado no tipo do modelo
+                if "xtts" in model_path.lower():
+                    self.voice_clone_frame.pack(fill="x", padx=20, pady=10)
+                else:
+                    self.voice_clone_frame.pack_forget()
+                    
+                # Habilita controles
+                self.enable_synthesis_controls()
+                self.update_status(f"Modelo {choice} carregado com sucesso")
+                
+            except Exception as e:
+                app_logger.error(f"Erro ao carregar modelo: {str(e)}", exc_info=True)
+                messagebox.showerror("Erro", f"Não foi possível carregar o modelo.\nDetalhes: {str(e)}")
+                self.disable_synthesis_controls()
+                self.update_status("Erro ao carregar modelo")
+            
+        except Exception as e:
+            app_logger.error(f"Erro ao processar mudança de modelo: {str(e)}", exc_info=True)
+            messagebox.showerror("Erro", "Erro ao processar mudança de modelo")
+            self.disable_synthesis_controls()
+    
+    def enable_synthesis_controls(self):
+        """Habilita controles de síntese"""
+        self.generate_btn.configure(state="normal")
+        self.text_input.configure(state="normal")
+        
+    def disable_synthesis_controls(self):
+        """Desabilita controles de síntese"""
+        self.generate_btn.configure(state="disabled")
+        self.play_btn.configure(state="disabled")
+        self.stop_btn.configure(state="disabled")
+        # Não desabilita text_input para permitir que o usuário digite mesmo sem modelo
+    
+    def generate_audio(self):
+        """Gera o áudio a partir do texto inserido"""
+        try:
+            # Obtém o texto
+            text = self.text_input.get("1.0", "end").strip()
+            if not text:
+                messagebox.showwarning("Aviso", "Por favor, insira algum texto para gerar o áudio.")
+                return
+            
+            # Desabilita o botão durante a geração
+            self.generate_btn.configure(state="disabled")
+            
+            # Inicia a thread de geração
+            thread = threading.Thread(target=self._generate_audio_thread, args=(text,))
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            error_msg = f"Erro ao iniciar geração de áudio: {str(e)}"
+            app_logger.error(error_msg, exc_info=True)
+            messagebox.showerror("Erro", error_msg)
+            self.generate_btn.configure(state="normal")
+    
+    def _generate_audio_thread(self, text):
+        """Thread para geração de áudio"""
+        try:
+            app_logger.info("Iniciando geração de áudio")
+            
+            # Obtém o modelo selecionado
+            model_name = self.model_var.get()
+            if not model_name or model_name in ["Nenhum modelo encontrado", "Erro ao carregar modelos"]:
+                raise ValueError("Nenhum modelo válido selecionado")
+            
+            # Obtém o idioma selecionado e garante que seja uma string válida
+            selected_language = self.language_var.get()
+            language: str = "pt"  # Valor padrão
+            
+            if selected_language == "Português BR":
+                language = "pt"
+            elif selected_language == "Inglês":
+                language = "en"
+            elif selected_language == "Espanhol":
+                language = "es"
+            
+            # Obtém o texto para síntese
+            text = self.text_input.get("1.0", "end").strip()
+            if not text:
+                raise ValueError("Texto vazio")
+            
+            # Configura o caminho de saída
+            output_path = os.path.join("outputs", "output.wav")
+            os.makedirs("outputs", exist_ok=True)
+            
+            # Obtém o caminho real do modelo
+            model_path = self.model_manager.get_model_path(model_name, language)
+            app_logger.info(f"Usando modelo: {model_path}")
+            
+            # Carrega e usa o modelo
+            if not self.tts_engine.load_model(model_path):
+                raise RuntimeError(f"Falha ao carregar modelo: {model_path}")
+            
+            output_file = self.tts_engine.generate_speech(
+                text=text,
+                output_path=output_path,
+                language=language
+            )
+            
+            if not output_file:
+                raise RuntimeError("Falha ao gerar áudio")
+            
+            # Atualiza a interface
+            self.update_status("Áudio gerado com sucesso!")
+            self.enable_playback_controls()
+            
+        except Exception as e:
+            app_logger.error(f"Erro ao gerar áudio: {e}", exc_info=True)
+            self.update_status(f"Erro ao gerar áudio: {str(e)}")
+            self.disable_playback_controls()
     
     def play_audio(self):
-        if self.current_audio_file and os.path.exists(self.current_audio_file):
-            try:
-                pygame.mixer.music.load(self.current_audio_file)
-                pygame.mixer.music.play()
-                self.is_playing = True
-                self.play_btn.configure(state="disabled")
-                self.stop_btn.configure(state="normal")
-            except Exception as e:
-                self.logger.error(f"Erro ao reproduzir áudio: {e}")
-                messagebox.showerror("Erro", str(e))
+        """Reproduz o áudio gerado"""
+        try:
+            if not self.current_audio_file or not os.path.exists(self.current_audio_file):
+                messagebox.showwarning("Aviso", "Nenhum áudio disponível para reprodução.")
+                return
+            
+            if self.is_playing:
+                pygame.mixer.music.stop()
+                self.is_playing = False
+                self.play_btn.configure(text="Reproduzir")
+                self.stop_btn.configure(state="disabled")
+                return
+            
+            # Carrega e reproduz o áudio
+            pygame.mixer.music.load(self.current_audio_file)
+            pygame.mixer.music.play()
+            
+            # Atualiza estado
+            self.is_playing = True
+            self.play_btn.configure(text="Pausar")
+            self.stop_btn.configure(state="normal")
+            
+            # Inicia thread para monitorar fim da reprodução
+            threading.Thread(target=self._monitor_playback).start()
+            
+        except Exception as e:
+            app_logger.error("Erro ao reproduzir áudio", exc_info=True)
+            self.update_status(f"Erro ao reproduzir: {str(e)}")
+            messagebox.showerror("Erro", f"Erro ao reproduzir áudio: {str(e)}")
+            
+    def _monitor_playback(self):
+        """Monitora o estado da reprodução"""
+        try:
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+            
+            # Reseta estado quando terminar
+            if self.is_playing:
+                self.is_playing = False
+                self.play_btn.configure(text="Reproduzir")
+                self.stop_btn.configure(state="disabled")
+        except Exception as e:
+            app_logger.error("Erro ao monitorar reprodução", exc_info=True)
     
     def stop_audio(self):
-        if self.is_playing:
-            pygame.mixer.music.stop()
-            self.is_playing = False
-            self.play_btn.configure(state="normal")
-            self.stop_btn.configure(state="disabled")
+        """Para a reprodução do áudio"""
+        try:
+            app_logger.info("Parando reprodução de áudio")
+            if self.is_playing:
+                pygame.mixer.music.stop()
+                self.is_playing = False
+                self.play_btn.configure(state="normal")
+                self.stop_btn.configure(state="disabled")
+        except Exception as e:
+            app_logger.error("Erro ao parar áudio", exc_info=True)
+            messagebox.showerror("Erro", str(e))
     
     def save_audio(self):
-        if not self.current_audio_file:
-            return
+        """Salva o áudio gerado"""
+        try:
+            app_logger.info("Iniciando salvamento de áudio")
+            if not self.current_audio_file:
+                return
             
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".wav",
-            filetypes=[("Arquivos WAV", "*.wav")],
-            initialdir=os.path.dirname(self.current_audio_file)
-        )
-        
-        if file_path:
-            try:
-                import shutil
-                shutil.copy2(self.current_audio_file, file_path)
-                self.status_label.configure(text=f"Áudio salvo em: {file_path}")
-            except Exception as e:
-                self.logger.error(f"Erro ao salvar áudio: {e}")
-                messagebox.showerror("Erro", str(e))
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".wav",
+                filetypes=[("Arquivos WAV", "*.wav")],
+                initialdir=os.path.dirname(self.current_audio_file)
+            )
+            
+            if file_path:
+                try:
+                    import shutil
+                    shutil.copy2(self.current_audio_file, file_path)
+                    self.status_label.configure(text=f"Áudio salvo em: {file_path}")
+                except Exception as e:
+                    app_logger.error(f"Erro ao salvar áudio: {e}")
+                    messagebox.showerror("Erro", str(e))
+        except Exception as e:
+            app_logger.error("Erro ao salvar áudio", exc_info=True)
+            messagebox.showerror("Erro", str(e))
     
     def browse_voice_file(self):
         file_path = filedialog.askopenfilename(
@@ -409,7 +622,7 @@ class MainWindow(ctk.CTk):
             # TODO: Implementar validação real do dataset
             messagebox.showinfo("Sucesso", "Dataset validado com sucesso!")
         except Exception as e:
-            self.logger.error(f"Erro ao validar dataset: {e}")
+            app_logger.error(f"Erro ao validar dataset: {e}")
             messagebox.showerror("Erro", str(e))
     
     def start_training(self):
@@ -437,7 +650,7 @@ class MainWindow(ctk.CTk):
                 self.training_log.see("end")
                 threading.Event().wait(1.0)
         except Exception as e:
-            self.logger.error(f"Erro no treinamento: {e}")
+            app_logger.error(f"Erro no treinamento: {e}")
             messagebox.showerror("Erro", str(e))
         finally:
             self.training_in_progress = False
@@ -463,17 +676,93 @@ class MainWindow(ctk.CTk):
             messagebox.showerror("Erro", f"Parâmetros inválidos: {e}")
             return False
     
-    def download_model(self):
-        # TODO: Implementar download de modelo
-        pass
+    def download_model(self, model=None):
+        """Baixa um modelo específico"""
+        try:
+            if model is None:
+                app_logger.warning("Nenhum modelo selecionado para download")
+                return
+                
+            app_logger.info(f"Iniciando download do modelo: {model['name']}")
+            
+            # Desabilita botões durante o download
+            for widget in self.models_list_frame.winfo_children():
+                if isinstance(widget, ctk.CTkButton):
+                    widget.configure(state="disabled")
+            
+            # Chama o método correto do ModelManager
+            success = self.model_manager.download_model(model["path"])
+            
+            if success:
+                app_logger.info(f"Modelo {model['name']} baixado com sucesso")
+                self.refresh_models_list()
+            else:
+                app_logger.error(f"Falha ao baixar modelo {model['name']}")
+                
+        except Exception as e:
+            app_logger.error(f"Erro ao baixar modelo: {str(e)}", exc_info=True)
+        finally:
+            # Reabilita botões
+            for widget in self.models_list_frame.winfo_children():
+                if isinstance(widget, ctk.CTkButton):
+                    widget.configure(state="normal")
+
+    def remove_model(self, model=None):
+        """Remove um modelo específico"""
+        try:
+            if model is None:
+                app_logger.warning("Nenhum modelo selecionado para remoção")
+                return
+                
+            app_logger.info(f"Iniciando remoção do modelo: {model['name']}")
+            
+            # Confirmação antes de remover
+            result = messagebox.askyesno(
+                "Confirmar Remoção",
+                f"Tem certeza que deseja remover o modelo {model['name']}?"
+            )
+            
+            if result:
+                success = self.model_manager.remove_model(model["path"])
+                
+                if success:
+                    app_logger.info(f"Modelo {model['name']} removido com sucesso")
+                    self.refresh_models_list()
+                else:
+                    app_logger.error(f"Falha ao remover modelo {model['name']}")
+                    
+        except Exception as e:
+            app_logger.error(f"Erro ao remover modelo: {str(e)}", exc_info=True)
     
-    def remove_model(self):
-        # TODO: Implementar remoção de modelo
-        pass
+    def update_status(self, message: str) -> None:
+        """Atualiza a mensagem de status"""
+        if hasattr(self, 'status_label'):
+            self.status_label.configure(text=message)
+            app_logger.info(message)
     
-    def refresh_models(self):
-        # TODO: Implementar atualização da lista de modelos
-        pass
+    def refresh_models_list(self):
+        """Atualiza a lista de modelos"""
+        try:
+            app_logger.debug("Atualizando lista de modelos")
+            
+            # Limpa a lista atual
+            self.models_listbox.delete("1.0", "end")
+            
+            # Obtém a lista de modelos
+            models = self.model_manager.get_available_models()
+            
+            # Formata e exibe os modelos
+            if not models or models == ["Nenhum modelo encontrado"]:
+                self.models_listbox.insert("1.0", "Nenhum modelo encontrado\n")
+            else:
+                for model in models:
+                    self.models_listbox.insert("end", f"• {model}\n")
+            
+            app_logger.debug(f"Lista de modelos atualizada: {len(models)} modelos encontrados")
+            
+        except Exception as e:
+            app_logger.error("Erro ao atualizar lista de modelos", exc_info=True)
+            self.models_listbox.insert("1.0", "Erro ao carregar modelos\n")
     
     def browse_models_dir(self):
         dir_path = filedialog.askdirectory()
@@ -491,7 +780,7 @@ class MainWindow(ctk.CTk):
         config = {
             "models_dir": self.models_dir_entry.get(),
             "output_dir": self.output_dir_entry.get(),
-            "default_language": self.lang_var.get(),
+            "default_language": self.language_var.get(),
             "training": {
                 "epochs": self.epochs_entry.get(),
                 "batch_size": self.batch_size_entry.get(),
@@ -505,7 +794,7 @@ class MainWindow(ctk.CTk):
                 json.dump(config, f, indent=4)
             self.status_label.configure(text="Configurações salvas com sucesso!")
         except Exception as e:
-            self.logger.error(f"Erro ao salvar configurações: {e}")
+            app_logger.error(f"Erro ao salvar configurações: {e}")
             messagebox.showerror("Erro", str(e))
     
     def load_config(self):
@@ -519,7 +808,7 @@ class MainWindow(ctk.CTk):
             self.output_dir_entry.delete(0, "end")
             self.output_dir_entry.insert(0, config.get("output_dir", ""))
             
-            self.lang_var.set(config.get("default_language", "pt-br"))
+            self.language_var.set(config.get("default_language", "Português BR"))
             
             training = config.get("training", {})
             self.epochs_entry.delete(0, "end")
@@ -534,20 +823,32 @@ class MainWindow(ctk.CTk):
             self.base_model_var.set(training.get("base_model", "VITS"))
             
         except FileNotFoundError:
-            self.logger.warning("Arquivo de configuração não encontrado")
+            app_logger.warning("Arquivo de configuração não encontrado")
         except Exception as e:
-            self.logger.error(f"Erro ao carregar configurações: {e}")
+            app_logger.error(f"Erro ao carregar configurações: {e}")
             messagebox.showerror("Erro", str(e))
     
     def reset_config(self):
         if messagebox.askyesno("Confirmar", "Deseja resetar todas as configurações?"):
             self.models_dir_entry.delete(0, "end")
             self.output_dir_entry.delete(0, "end")
-            self.lang_var.set("pt-br")
+            self.language_var.set("Português BR")
             self.epochs_entry.delete(0, "end")
             self.epochs_entry.insert(0, "1000")
             self.batch_size_entry.delete(0, "end")
             self.batch_size_entry.insert(0, "32")
             self.lr_entry.delete(0, "end")
             self.lr_entry.insert(0, "0.0002")
-            self.base_model_var.set("VITS") 
+            self.base_model_var.set("VITS")
+
+    def enable_playback_controls(self):
+        """Habilita os controles de reprodução"""
+        self.play_btn.configure(state="normal")
+        self.save_btn.configure(state="normal")
+        self.stop_btn.configure(state="normal")
+
+    def disable_playback_controls(self):
+        """Desabilita os controles de reprodução"""
+        self.play_btn.configure(state="disabled")
+        self.save_btn.configure(state="disabled")
+        self.stop_btn.configure(state="disabled") 

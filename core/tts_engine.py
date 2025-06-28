@@ -4,6 +4,8 @@ import os
 import threading
 from typing import Optional, Dict, List
 import logging
+import sys
+from pathlib import Path
 
 class TTSEngine:
     def __init__(self):
@@ -16,15 +18,6 @@ class TTSEngine:
             "pt-br": {
                 "VITS": "tts_models/pt/cv/vits",
                 "XTTS v2": "tts_models/multilingual/multi-dataset/xtts_v2",
-            },
-            "en": {
-                "Tacotron2": "tts_models/en/ljspeech/tacotron2-DDC",
-                "VITS": "tts_models/en/ljspeech/vits",
-                "Neural HMM": "tts_models/en/ljspeech/neural_hmm"
-            },
-            "es": {
-                "Tacotron2": "tts_models/es/mai/tacotron2-DDC",
-                "VITS": "tts_models/es/css10/vits"
             },
             "multilingual": {
                 "XTTS v2": "tts_models/multilingual/multi-dataset/xtts_v2"
@@ -41,32 +34,94 @@ class TTSEngine:
             "VITS": {
                 "support_voice_cloning": False,
                 "requires_speaker_wav": False,
-                "languages": ["pt-br", "en", "es"]
-            },
-            "Tacotron2": {
-                "support_voice_cloning": False,
-                "requires_speaker_wav": False,
-                "languages": ["en", "es"]
-            },
-            "Neural HMM": {
-                "support_voice_cloning": False,
-                "requires_speaker_wav": False,
-                "languages": ["en"]
+                "languages": ["pt-br"]
             }
         }
+        
+        self._setup_environment()
     
-    def load_model(self, model_name: str, language: str = "pt-br") -> bool:
-        """Carrega um modelo TTS específico"""
+    def _setup_environment(self):
+        """Configura o ambiente necessário para o TTS"""
         try:
-            if language in self.available_models:
-                model_path = self.available_models[language].get(model_name)
-                if model_path:
-                    self.logger.info(f"Carregando modelo {model_name} para {language}")
-                    self.current_model = TTS(model_path).to(self.device)
-                    return True
-            return False
+            # Configura o PyTorch
+            torch.set_grad_enabled(False)  # Desativa gradientes para inferência
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            
+            # Configura os diretórios de cache
+            cache_dir = Path.home() / ".cache" / "tts"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["TTS_HOME"] = str(cache_dir)
+            
+            # Adiciona classes seguras para carregamento
+            # Nota: Removido temporariamente devido a problemas de tipagem
+            # Será tratado em uma atualização futura
+            
         except Exception as e:
-            self.logger.error(f"Erro ao carregar modelo: {e}")
+            self.logger.error(f"Erro ao configurar ambiente: {e}", exc_info=True)
+    
+    def load_model(self, model_path: str) -> bool:
+        """
+        Carrega um modelo TTS específico
+        
+        Args:
+            model_path: Caminho do modelo (ex: tts_models/pt/cv/vits)
+            
+        Returns:
+            bool: True se o modelo foi carregado com sucesso
+        """
+        try:
+            self.logger.info(f"Tentando carregar modelo: {model_path}")
+            
+            # Limpa o modelo atual e a memória CUDA
+            if self.current_model:
+                del self.current_model
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
+            
+            # Garante que o nome do modelo está no formato correto
+            if not model_path.startswith("tts_models/"):
+                # Converte o formato antigo para o novo
+                parts = model_path.split(" ")
+                model_type = parts[0].lower()  # ex: VITS -> vits
+                lang = "pt"  # default para português
+                dataset = "cv"  # Common Voice como dataset padrão
+                model_path = f"tts_models/{lang}/{dataset}/{model_type}"
+            
+            self.logger.info(f"Usando caminho de modelo formatado: {model_path}")
+            
+            # Tenta carregar o modelo
+            try:
+                self.current_model = TTS(model_name=model_path)
+                if self.device == "cuda":
+                    self.current_model.to(self.device)
+                self.logger.info(f"Modelo {model_path} carregado com sucesso")
+                return True
+                
+            except RuntimeError as e:
+                error_msg = str(e).lower()
+                
+                if "espeak" in error_msg:
+                    self.logger.warning("Espeak não encontrado, tentando sem fonemas")
+                    self.current_model = TTS(model_name=model_path, use_phonemes=False)
+                    if self.device == "cuda":
+                        self.current_model.to(self.device)
+                    return True
+                    
+                elif "cuda out of memory" in error_msg:
+                    self.logger.warning("Memória CUDA insuficiente, usando CPU")
+                    self.device = "cpu"
+                    self.current_model = TTS(model_name=model_path)
+                    return True
+                    
+                else:
+                    raise
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao carregar modelo {model_path}: {str(e)}", exc_info=True)
+            self.current_model = None
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
             return False
     
     def generate_speech(self, 
@@ -74,36 +129,32 @@ class TTSEngine:
                        output_path: str = "output.wav",
                        speaker_wav: Optional[str] = None,
                        language: Optional[str] = None) -> str:
-        """
-        Gera fala a partir do texto
-        
-        Args:
-            text: Texto para sintetizar
-            output_path: Caminho para salvar o áudio
-            speaker_wav: Arquivo de áudio do speaker para clonagem de voz (opcional)
-            language: Código do idioma (opcional)
-        
-        Returns:
-            Caminho do arquivo de áudio gerado
-        """
+        """Gera fala a partir do texto"""
         if not self.current_model:
             raise Exception("Nenhum modelo carregado")
         
         try:
-            kwargs = {"text": text, "file_path": output_path}
+            # Configura os parâmetros para síntese
+            kwargs = {
+                "text": text,
+                "file_path": output_path,
+                "split_sentences": True
+            }
             
             # Adiciona parâmetros específicos se necessário
             if speaker_wav and hasattr(self.current_model, "speakers"):
                 kwargs["speaker_wav"] = speaker_wav
             
-            if language and "multilingual" in self.current_model.model_name:
+            if language and "multilingual" in str(self.current_model.model_name):
                 kwargs["language"] = language
             
+            # Gera o áudio
+            self.logger.info(f"Gerando áudio com modelo: {self.current_model.model_name}")
             self.current_model.tts_to_file(**kwargs)
             return output_path
             
         except Exception as e:
-            self.logger.error(f"Erro ao gerar fala: {e}")
+            self.logger.error(f"Erro ao gerar fala: {e}", exc_info=True)
             raise
     
     def get_model_info(self, model_name: str) -> Dict:
@@ -118,8 +169,10 @@ class TTSEngine:
     
     def list_speakers(self) -> List[str]:
         """Lista speakers disponíveis no modelo atual"""
-        if self.current_model and hasattr(self.current_model, "speakers"):
-            return self.current_model.speakers
+        if not self.current_model:
+            return []
+        if hasattr(self.current_model, "speakers"):
+            return [str(s) for s in self.current_model.speakers]  # Garante que são strings
         return []
     
     def supports_voice_cloning(self) -> bool:
